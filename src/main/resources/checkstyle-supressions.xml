@@ -1,0 +1,27 @@
+<?xml version="1.0"?>
+<!DOCTYPE suppressions PUBLIC "-//Checkstyle//DTD SuppressionFilter Configuration 1.2//EN"
+        "https://checkstyle.org/dtds/suppressions_1_2.dtd">
+<suppressions>
+    <!-- Reason: Application.java has only main() static method but is not a utility class -->
+    <suppress checks="HideUtilityClassConstructor" files="Application.java"/>
+    <!-- Reason: Application.java is standard Spring Boot entry-point and does not need documentation -->
+    <suppress checks="JavadocType" files="Application.java"/>
+    <!-- Reason: main method is standard Spring Boot entry-point and does not need documentation -->
+    <suppress checks="JavadocMethod" files="Application.java"/>
+    <!-- Reason: Serialising to json requires multiple fields in constructor -->
+    <suppress checks="ParameterNumber" files="[\\/]notification.service[\\/].*\.java$"/>
+
+    <!--For the adaptor package -->
+
+    <!-- Reason: most entities will have getters setters and constructors which hide fields -->
+    <suppress checks="HiddenField" files="[\\/]dwp.jsa[\\/].*\.java$"/>
+
+    <suppress checks="ParameterNumber" files="Claimant.java"/>
+    <suppress checks="ParameterNumber" files="ClaimForms.java"/>
+    <suppress checks="ParameterNumber" files="Evidence.java"/>
+    <suppress checks="ParameterNumber" files="SummaryService.java"/>
+    <suppress checks="ParameterNumber" files="CurrentWork.java"/>
+    <suppress checks="ParameterNumber" files="PreviousWork.java"/>
+    <suppress checks="ParameterNumber" files="Circumstances.java"/>
+    <suppress checks="ParameterNumber" files="Evidence.java"/>
+</suppressions>
