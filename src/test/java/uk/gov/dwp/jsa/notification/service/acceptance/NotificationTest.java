@@ -26,6 +26,7 @@ import uk.gov.dwp.jsa.adaptors.dto.claim.circumstances.Circumstances;
 import uk.gov.dwp.jsa.adaptors.dto.claim.LanguagePreference;
 import uk.gov.dwp.jsa.adaptors.http.api.NotificationRequest;
 import uk.gov.dwp.jsa.notification.service.Application;
+import uk.gov.dwp.jsa.notification.service.config.NotificationAwsSsmProperties;
 import uk.gov.dwp.jsa.notification.service.services.SmsRequest;
 import uk.gov.dwp.jsa.notification.service.services.evidence.EvidenceFactory;
 import uk.gov.dwp.jsa.security.WithMockUser;
@@ -92,6 +93,9 @@ public class NotificationTest {
     private CircumstancesServiceAdaptor circumstancesServiceAdaptor;
     @MockBean
     private BankDetailsServiceAdaptor bankDetailsServiceAdaptor;
+
+    @Autowired
+    private NotificationAwsSsmProperties notificationAwsSsmProperties;
 
     @Before
     public void setup() {

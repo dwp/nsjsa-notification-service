@@ -5,7 +5,7 @@
     <modelVersion>4.0.0</modelVersion>
     <groupId>uk.gov.dwp.jsa</groupId>
     <artifactId>notification-service</artifactId>
-    <version>1.16.0</version>
+    <version>1.17.0</version>
     <packaging>jar</packaging>
     <name>notification-service</name>
     <description>Notification Service for DWP JSA</description>
@@ -17,7 +17,7 @@
         <!-- lookup parent from repository -->
     </parent>
     <properties>
-        <nsjsa-commons.version>1.15.0-101634f9</nsjsa-commons.version>
+        <nsjsa-commons.version>1.16.0-df633087</nsjsa-commons.version>
 
         <maven.minimum.version>3.5.0</maven.minimum.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
@@ -140,6 +140,11 @@
             <groupId>org.springframework.security</groupId>
             <artifactId>spring-security-test</artifactId>
             <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.commons</groupId>
+            <artifactId>commons-csv</artifactId>
+            <version>1.9.0</version>
         </dependency>
     </dependencies>
     <build>

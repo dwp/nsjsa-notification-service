@@ -17,13 +17,16 @@ import uk.gov.service.notify.SendEmailResponse;
 import uk.gov.service.notify.SendSmsResponse;
 
 import javax.servlet.http.HttpServletRequest;
+import java.util.Arrays;
+import java.util.List;
 import java.util.concurrent.ExecutionException;
 
 import static org.hamcrest.CoreMatchers.instanceOf;
-import static org.hamcrest.CoreMatchers.not;
 import static org.hamcrest.Matchers.containsString;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertThat;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @RunWith(MockitoJUnitRunner.class)
@@ -35,6 +38,8 @@ public class NotificationControllerTest {
     private static final String MAIL_CLAIM_STATS_RESPONSE = "{\"content\":{\"body\":\"Total Number Of Claims 0\\r\\nTotal Number Of Claims Open 0\\r\\nOldest Claim Open 2019-04-08T12:52\\r\\nTotal Number Of Claims Closed 0\\r\\nTotal Number Of Claims In Day Closed In 24hr 0\\r\\nTotal Number Of Claims In Day Closed In 48hr 0\\r\\nTotal Number Of Claims In Week 0\\r\\nTotal Number Of Claims In Week Closed In 24hr 0\\r\\nTotal Number Of Claims In Week Closed In 48hr 0\",\"from_email\":\"new.style.job.seekers.allowance@notifications.service.gov.uk\",\"subject\":\"Claim Statistics Email\"},\"id\":\"680fca07-1569-494e-9f15-93f4bc8f9854\",\"reference\":\"d5b480bb-6a1e-4bb6-97d2-eb49f4a93a51\",\"scheduled_for\":null,\"template\":{\"id\":\"c41c28b6-cd2c-4212-a528-6e3cd56119a9\",\"uri\":\"https://api.notifications.service.gov.uk/services/458f9f73-84ab-4546-8e77-b15cbea1f8db/templates/c41c28b6-cd2c-4212-a528-6e3cd56119a9\",\"version\":7},\"uri\":\"https://api.notifications.service.gov.uk/v2/notifications/680fca07-1569-494e-9f15-93f4bc8f9854\"}";
     private static final String PROGRESS_MAIL_RESPONSE = "{\"content\":{\"body\":\"#Dear person\\r\\n\\r\\nWe’ve started to process your New Style Jobseeker’s Allowance (JSA) application.\",\"from_email\":\"new.style.jsa@notifications.service.gov.uk\",\"subject\":\"New style Jobseeker\\u2019s Allowance \\u2013 application received\"},\"id\":\"a8e03f45-3900-4c74-bfec-d2306d2eeb2e\",\"reference\":\"8649139a-7774-44eb-9c0b-326927415755\",\"scheduled_for\":null,\"template\":{\"id\":\"7f64a2f7-9143-4143-98d0-316cf5fe21b6\",\"uri\":\"https://api.notifications.service.gov.uk/services/458f9f73-84ab-4546-8e77-b15cbea1f8db/templates/7f64a2f7-9143-4143-98d0-316cf5fe21b6\",\"version\":28},\"uri\":\"https://api.notifications.service.gov.uk/v2/notifications/a8e03f45-3900-4c74-bfec-d2306d2eeb2e\"}";
     private static final String PROGRESS_SMS_RESPONSE = "{\"content\":{\"body\":\"Dear person.  We've started to process your application. We will contact you if we have any questions.\",\"from_number\":\"GOVUK\"},\"id\":\"e6e93f93-c156-4ce1-9c1b-463e6156e7de\",\"reference\":null,\"scheduled_for\":null,\"template\":{\"id\":\"37152dcb-6fd4-4e23-8991-7b9c3b703b05\",\"uri\":\"https://api.notifications.service.gov.uk/services/458f9f73-84ab-4546-8e77-b15cbea1f8db/templates/37152dcb-6fd4-4e23-8991-7b9c3b703b05\",\"version\":4},\"uri\":\"https://api.notifications.service.gov.uk/v2/notifications/e6e93f93-c156-4ce1-9c1b-463e6156e7de\"}\n";
+    private static final String MAIL_DAILY_CLAIM_STATS_RESPONSE = "{\"content\":{\"body\":\"Total Number Of Claims 0\\r\\nTotal Number Of Claims Open 0\\r\\nOldest Claim Open 2019-04-08T12:52\\r\\nTotal Number Of Claims Closed 0\\r\\nTotal Number Of Claims In Day Closed In 24hr 0\\r\\nTotal Number Of Claims In Day Closed In 48hr 0\\r\\nTotal Number Of Claims In Week 0\\r\\nTotal Number Of Claims In Week Closed In 24hr 0\\r\\nTotal Number Of Claims In Week Closed In 48hr 0\",\"from_email\":\"new.style.job.seekers.allowance@notifications.service.gov.uk\",\"subject\":\"Daily Claim Statistics Email\"},\"id\":\"680fca07-1569-494e-9f15-93f4bc8f9854\",\"reference\":\"d5b480bb-6a1e-4bb6-97d2-eb49f4a93a51\",\"scheduled_for\":null,\"template\":{\"id\":\"c41c28b6-cd2c-4212-a528-6e3cd56119a9\",\"uri\":\"https://api.notifications.service.gov.uk/services/458f9f73-84ab-4546-8e77-b15cbea1f8db/templates/c41c28b6-cd2c-4212-a528-6e3cd56119a9\",\"version\":7},\"uri\":\"https://api.notifications.service.gov.uk/v2/notifications/680fca07-1569-494e-9f15-93f4bc8f9854\"}";
+    private static final int DAILY_STATS_PREVIOUS_DAY_COUNT = 2;
 
     @Mock
     private HttpServletRequest servletRequest;
@@ -52,6 +57,8 @@ public class NotificationControllerTest {
     private NotificationController notificationController;
 
     private ResponseEntity<ApiResponse<String>> response;
+
+    private ResponseEntity<ApiResponse<List<String>>> responses;
 
     @Before
     public void setup() {
@@ -116,6 +123,21 @@ public class NotificationControllerTest {
         ThenIExpectTheProgressSmsResponseToBeCorrect();
     }
 
+    @Test
+    public void testSendDailyClaimStatsMail() throws NotificationClientException {
+        givenWeHaveAMailDailyClaimStatsResponse();
+        whenISendTheMailDailyClaimStats();
+        ThenIExpectTheMailDailyClaimStatsResponseToBeCorrect();
+    }
+
+    private void givenWeHaveAMailDailyClaimStatsResponse() throws NotificationClientException {
+        final List<SendEmailResponse> emailResponses = Arrays.asList(
+                new SendEmailResponse(MAIL_DAILY_CLAIM_STATS_RESPONSE),
+                new SendEmailResponse(MAIL_DAILY_CLAIM_STATS_RESPONSE)
+        );
+        when(notificationService.sendDailyClaimStatsSummaryMail(2)).thenReturn(emailResponses);
+    }
+
     private void givenWeHaveAMailResponse() throws NotificationClientException, ExecutionException, InterruptedException {
         when(notificationService.sendMail(request)).thenReturn(new SendEmailResponse(MAIL_RESPONSE));
     }
@@ -157,6 +179,11 @@ public class NotificationControllerTest {
     private void whenISendTheMailClaimStats() throws NotificationClientException {
         response = notificationController.sendClaimStatsMail(servletRequest, claimStats);
     }
+
+    private void whenISendTheMailDailyClaimStats() throws NotificationClientException {
+        responses = notificationController.sendDailyClaimStatsMail(servletRequest, DAILY_STATS_PREVIOUS_DAY_COUNT);
+    }
+
     private void whenISendTheProgressSms() throws NotificationClientException {
         response = notificationController.sendClaimProgressSms(servletRequest, request);
     }
@@ -196,6 +223,14 @@ public class NotificationControllerTest {
         assertEquals(HttpStatus.OK, response.getStatusCode());
         assertThat(apiSuccess.getPath().getPath(), containsString("/nsjsa/"));
         assertThat(apiSuccess.getData(), instanceOf(String.class));
+    }
+
+    private void ThenIExpectTheMailDailyClaimStatsResponseToBeCorrect() throws NotificationClientException {
+        verify(notificationService).sendDailyClaimStatsSummaryMail(eq(DAILY_STATS_PREVIOUS_DAY_COUNT));
+        final ApiSuccess<List<String>> apiSuccess = responses.getBody().getSuccess().get(0);
+        assertEquals(HttpStatus.OK, responses.getStatusCode());
+        assertThat(apiSuccess.getPath().getPath(), containsString("/nsjsa/"));
+        assertThat(apiSuccess.getData(), instanceOf(List.class));
     }
 
     private void ThenIExpectTheProgressMailResponseToBeCorrect() {

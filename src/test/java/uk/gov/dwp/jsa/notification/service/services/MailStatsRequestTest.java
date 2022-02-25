@@ -43,7 +43,8 @@ public class MailStatsRequestTest {
                 1.5,
                 1,
                 1,
-                1
+                1,
+                0
         ));
     }
 
@@ -59,7 +60,8 @@ public class MailStatsRequestTest {
                 1,
                 1,
                 1,
-                1
+                1,
+                0
         ));
     }
 

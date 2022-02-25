@@ -3,6 +3,7 @@ package uk.gov.dwp.jsa.notification.service.config;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Configuration;
 
+
 @Configuration
 @ConfigurationProperties(prefix = "notification.client")
 public class NotificationProperties {
@@ -27,6 +28,7 @@ public class NotificationProperties {
     private String notificationUrl;
     private String proxyHost;
     private String proxyPort;
+    private String mailDailyClaimStatsSummaryTemplateId;
 
     public String getMailTemplateIdEnglish() {
         return mailTemplateIdEnglish;
@@ -186,5 +188,13 @@ public class NotificationProperties {
 
     public void setMailSuccessTemplateIdWelsh(final String mailSuccessTemplateIdWelsh) {
         this.mailSuccessTemplateIdWelsh = mailSuccessTemplateIdWelsh;
+    }
+
+    public String getMailDailyClaimStatsSummaryTemplateId() {
+        return mailDailyClaimStatsSummaryTemplateId;
+    }
+
+    public void setMailDailyClaimStatsSummaryTemplateId(final String mailDailyClaimStatsSummaryTemplateId) {
+        this.mailDailyClaimStatsSummaryTemplateId = mailDailyClaimStatsSummaryTemplateId;
     }
 }

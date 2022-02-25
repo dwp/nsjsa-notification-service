@@ -9,6 +9,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import uk.gov.dwp.jsa.adaptors.http.api.ApiResponse;
 import uk.gov.dwp.jsa.adaptors.http.api.ClaimStats;
@@ -24,7 +25,10 @@ import uk.gov.service.notify.SendSmsResponse;
 
 import javax.servlet.http.HttpServletRequest;
 import java.net.URI;
+import java.util.List;
 import java.util.concurrent.ExecutionException;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import static org.springframework.web.servlet.mvc.method.annotation.MvcUriComponentsBuilder.fromController;
 
@@ -96,6 +100,36 @@ public class NotificationController {
         return buildSuccessfulResponse(
                 buildResourceUriFor("/notification/mail/mi-claim-stats"),
                 mailResponse.getReference().orElse(""),
+                HttpStatus.OK);
+    }
+
+    /**
+     * Sends an internal email to DWP stakeholders showing a table of the claim statistics for the selected
+     * previous number of days.
+     *
+     * @param request request
+     * @param previousDayCount how many previous days to include in the summary
+     *
+     * @return
+     * @throws NotificationClientException
+     */
+    @PreAuthorize("hasAnyAuthority('CCM')")
+    @PostMapping("/notification/mail/daily-claim-stats-summary")
+    public ResponseEntity<ApiResponse<List<String>>> sendDailyClaimStatsMail(
+            final HttpServletRequest request,
+            @RequestParam("previousDayCount") final int previousDayCount
+    )
+            throws NotificationClientException {
+        LOGGER.debug("Sending daily claim stats report email");
+        final List<SendEmailResponse> responses = notificationService.sendDailyClaimStatsSummaryMail(previousDayCount);
+        //Get all references
+        final List<String> references = responses.stream()
+                .flatMap(response -> response.getReference().map(Stream::of).orElseGet(Stream::empty))
+                .collect(Collectors.toList());
+
+        return buildSuccessfulResponse(
+                buildResourceUriFor("/notification/mail/daily-claim-stats-summary"),
+                references,
                 HttpStatus.OK);
     }
 

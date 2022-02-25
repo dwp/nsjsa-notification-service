@@ -1,5 +1,9 @@
 package uk.gov.dwp.jsa.notification.service.services;
 
+import com.amazonaws.services.simplesystemsmanagement.AWSSimpleSystemsManagement;
+import com.amazonaws.services.simplesystemsmanagement.model.GetParameterRequest;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import uk.gov.dwp.jsa.adaptors.BankDetailsServiceAdaptor;
@@ -13,8 +17,11 @@ import uk.gov.dwp.jsa.adaptors.dto.claim.LanguagePreference;
 import uk.gov.dwp.jsa.adaptors.http.api.ClaimStats;
 import uk.gov.dwp.jsa.adaptors.http.api.NotificationRequest;
 import uk.gov.dwp.jsa.adaptors.http.api.SubmittedClaimsTally;
+import uk.gov.dwp.jsa.notification.service.config.NotificationAwsSsmProperties;
 import uk.gov.dwp.jsa.notification.service.config.NotificationProperties;
 import uk.gov.dwp.jsa.notification.service.exceptions.ClaimantByIdNotFoundException;
+import uk.gov.dwp.jsa.notification.service.model.DailyClaimStatsSummary;
+import uk.gov.dwp.jsa.notification.service.services.csv.DailyClaimStatsSummaryCsvCreator;
 import uk.gov.dwp.jsa.notification.service.services.evidence.Evidence;
 import uk.gov.dwp.jsa.notification.service.services.evidence.EvidenceFactory;
 import uk.gov.service.notify.NotificationClient;
@@ -22,13 +29,21 @@ import uk.gov.service.notify.NotificationClientException;
 import uk.gov.service.notify.SendEmailResponse;
 import uk.gov.service.notify.SendSmsResponse;
 
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
+import java.util.stream.Collectors;
 
 @Service
 public class NotificationService {
+    private static final Logger LOGGER = LoggerFactory.getLogger(NotificationService.class);
 
     private NotificationProperties notificationProperties;
     private NotificationClient client;
@@ -36,6 +51,10 @@ public class NotificationService {
     private CircumstancesServiceAdaptor circumstancesServiceAdaptor;
     private BankDetailsServiceAdaptor bankDetailsServiceAdaptor;
     private EvidenceFactory evidenceFactory;
+    private final DailyClaimStatsReportService dailyClaimStatsReportService;
+    private final AWSSimpleSystemsManagement ssmClient;
+    private final NotificationAwsSsmProperties awsProperties;
+    private final DailyClaimStatsSummaryCsvCreator claimStatsSummaryCsvCreator;
 
     @Autowired
     public NotificationService(final NotificationProperties notificationProperties,
@@ -43,13 +62,21 @@ public class NotificationService {
                                final ClaimantServiceAdaptor claimantServiceAdaptor,
                                final CircumstancesServiceAdaptor circumstancesServiceAdaptor,
                                final BankDetailsServiceAdaptor bankDetailsServiceAdaptor,
-                               final EvidenceFactory evidenceFactory) {
+                               final EvidenceFactory evidenceFactory,
+                               final DailyClaimStatsReportService dailyClaimStatsReportService,
+                               final AWSSimpleSystemsManagement ssmClient,
+                               final NotificationAwsSsmProperties awsProperties,
+                               final DailyClaimStatsSummaryCsvCreator claimStatsSummaryCsvCreator) {
         this.notificationProperties = notificationProperties;
         this.client = client;
         this.claimantServiceAdaptor = claimantServiceAdaptor;
         this.circumstancesServiceAdaptor = circumstancesServiceAdaptor;
         this.bankDetailsServiceAdaptor = bankDetailsServiceAdaptor;
         this.evidenceFactory = evidenceFactory;
+        this.dailyClaimStatsReportService = dailyClaimStatsReportService;
+        this.ssmClient = ssmClient;
+        this.awsProperties = awsProperties;
+        this.claimStatsSummaryCsvCreator = claimStatsSummaryCsvCreator;
     }
 
     public SendEmailResponse sendMail(final NotificationRequest request)
@@ -248,6 +275,50 @@ public class NotificationService {
         return client.sendEmail(templateId, email, mailStatsRequest.getPersonalisation(), reference);
     }
 
+    /**
+     * Sends the daily claim statistics to the mailing list.
+     *
+     * @param previousDayCount number of days to send in summary
+     *
+     * @return mail responses for each mail sent
+     * @throws NotificationClientException if an error with Notify
+     */
+    public List<SendEmailResponse> sendDailyClaimStatsSummaryMail(final int previousDayCount)
+            throws NotificationClientException {
+        //Get all the summaries and sort in date descending order for CSV output
+        final List<DailyClaimStatsSummary> summaries =
+                dailyClaimStatsReportService.getPreviousDailyClaimStats(previousDayCount).stream()
+                        .sorted(Comparator.comparing(DailyClaimStatsSummary::getDateOfCapture).reversed())
+                        .collect(Collectors.toList());
+
+        //Retrieve recipients of email and use a single reference for entire batch of emails
+        final List<String> recipients = getDailyClaimStatsRecipients();
+        final String reference = UUID.randomUUID().toString();
+
+        LOGGER.debug("Sending daily claim stats email to {} recipients with reference {}", recipients.size(),
+                reference);
+
+        final String templateId = notificationProperties.getMailDailyClaimStatsSummaryTemplateId();
+        //Attach file to personalisation
+        final Map<String, Object> personalisation = new HashMap<>();
+        personalisation.put("link_to_file",
+                NotificationClient.prepareUpload(claimStatsSummaryCsvCreator.createCsv(summaries), true));
+        final List<SendEmailResponse> responses = new ArrayList<>();
+
+        //Send email to all recipients, capturing the responses
+        for (final String recipient : recipients) {
+            LOGGER.trace("Attempting to send daily claim stats email to {}", recipient);
+            //Catch the exception so that if one email fails (possibly due to bad email address) try sending the others
+            try {
+                responses.add(client.sendEmail(templateId, recipient, personalisation, reference));
+                LOGGER.trace("Sent daily claim stats email to {}", recipient);
+            } catch (final NotificationClientException exception) {
+                LOGGER.error("Unable to send email to {}", recipient, exception);
+            }
+        }
+        return responses;
+    }
+
     private String getEmailTemplateId(final LanguagePreference languagePreference) {
         if (isWelshContactPreference(languagePreference)) {
             return notificationProperties.getMailTemplateIdWelsh();
@@ -292,5 +363,12 @@ public class NotificationService {
 
     private boolean isWelshContactPreference(final LanguagePreference languagePreference) {
         return Boolean.TRUE.equals(languagePreference.getWelshContact());
+    }
+
+    private List<String> getDailyClaimStatsRecipients() {
+        final String key = awsProperties.getPrefix() + awsProperties.getDailyClaimStatsMailingListKey();
+        return Arrays.asList(ssmClient.getParameter(
+                new GetParameterRequest().withName(key))
+                .getParameter().getValue().split(","));
     }
 }

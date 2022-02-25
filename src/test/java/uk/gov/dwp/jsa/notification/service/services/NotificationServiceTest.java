@@ -1,9 +1,13 @@
 package uk.gov.dwp.jsa.notification.service.services;
 
+import com.amazonaws.services.simplesystemsmanagement.AWSSimpleSystemsManagement;
+import com.amazonaws.services.simplesystemsmanagement.model.GetParameterResult;
+import com.amazonaws.services.simplesystemsmanagement.model.Parameter;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Answers;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.MockitoJUnitRunner;
 import uk.gov.dwp.jsa.adaptors.BankDetailsServiceAdaptor;
@@ -17,21 +21,30 @@ import uk.gov.dwp.jsa.adaptors.dto.claim.LanguagePreference;
 import uk.gov.dwp.jsa.adaptors.http.api.ClaimStats;
 import uk.gov.dwp.jsa.adaptors.http.api.NotificationRequest;
 import uk.gov.dwp.jsa.adaptors.http.api.SubmittedClaimsTally;
+import uk.gov.dwp.jsa.notification.service.config.NotificationAwsSsmProperties;
 import uk.gov.dwp.jsa.notification.service.config.NotificationProperties;
 import uk.gov.dwp.jsa.notification.service.exceptions.ClaimantByIdNotFoundException;
+import uk.gov.dwp.jsa.notification.service.model.DailyClaimStatsSummary;
+import uk.gov.dwp.jsa.notification.service.services.csv.DailyClaimStatsSummaryCsvCreator;
 import uk.gov.dwp.jsa.notification.service.services.evidence.Evidence;
 import uk.gov.dwp.jsa.notification.service.services.evidence.EvidenceFactory;
 import uk.gov.service.notify.NotificationClient;
 import uk.gov.service.notify.NotificationClientException;
+import uk.gov.service.notify.SendEmailResponse;
 
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 
-import static org.junit.Assert.assertNotNull;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.times;
@@ -57,6 +70,8 @@ public class NotificationServiceTest {
     private static final String SOME_SUCCESS_MAIL_TEMPLATE_ID_ENGLISH = "some mail template id";
     private static final String SOME_SUCCESS_MAIL_TEMPLATE_ID_WELSH = "stats mail template id";
     private static final String STATS_EMAIL_ADDRESS = "stats email address";
+    private static final String MAIL_RESPONSE_ONE = "{\"content\":{\"body\":\"#_RESPONSE_ONE_Dear person\\r\\n\\r\\nYour online application for Jobseeker...\",\"from_email\":\"new.style.jsa@notifications.service.gov.uk\",\"subject\":\"New style Jobseeker\\u2019s Allowance \\u2013 application received\"},\"id\":\"a8e03f45-3900-4c74-bfec-d2306d2eeb2e\",\"reference\":\"8649139a-7774-44eb-9c0b-326927415755\",\"scheduled_for\":null,\"template\":{\"id\":\"def632cd-387e-4a35-b72a-23ee4a33c2e8\",\"uri\":\"https://api.notifications.service.gov.uk/services/458f9f73-84ab-4546-8e77-b15cbea1f8db/templates/def632cd-387e-4a35-b72a-23ee4a33c2e8\",\"version\":28},\"uri\":\"https://api.notifications.service.gov.uk/v2/notifications/a8e03f45-3900-4c74-bfec-d2306d2eeb2e\"}";
+    private static final String MAIL_RESPONSE_TWO = "{\"content\":{\"body\":\"#_RESPONSE_TWO_Dear person\\r\\n\\r\\nYour online application for Jobseeker...\",\"from_email\":\"new.style.jsa@notifications.service.gov.uk\",\"subject\":\"New style Jobseeker\\u2019s Allowance \\u2013 application received\"},\"id\":\"a8e03f45-3900-4c74-bfec-d2306d2eeb2e\",\"reference\":\"8649139a-7774-44eb-9c0b-326927415755\",\"scheduled_for\":null,\"template\":{\"id\":\"def632cd-387e-4a35-b72a-23ee4a33c2e8\",\"uri\":\"https://api.notifications.service.gov.uk/services/458f9f73-84ab-4546-8e77-b15cbea1f8db/templates/def632cd-387e-4a35-b72a-23ee4a33c2e8\",\"version\":28},\"uri\":\"https://api.notifications.service.gov.uk/v2/notifications/a8e03f45-3900-4c74-bfec-d2306d2eeb2e\"}";
 
     private static final UUID CLAIMANT_ID = UUID.randomUUID();
     private static final LocalDate CLAIM_START_DATE = LocalDate.now();
@@ -96,7 +111,19 @@ public class NotificationServiceTest {
     @Mock
     private Evidence evidence;
 
+    @Mock
+    private DailyClaimStatsReportService mockDailyClaimStatsReportService;
+
+    @Mock
+    private AWSSimpleSystemsManagement mockSsmClient;
+
+    @Mock
+    private NotificationAwsSsmProperties mockAwsProperties;
+
     private NotificationService notificationService;
+
+    @Mock
+    private DailyClaimStatsSummaryCsvCreator mockCsvCreator;
 
     @Before
     public void setup() {
@@ -118,7 +145,8 @@ public class NotificationServiceTest {
         when(request.getClaimantId()).thenReturn(CLAIMANT_ID);
 
         notificationService = new NotificationService(notificationProperties, client, claimantServiceAdaptor,
-                circumstancesServiceAdaptor, bankDetailsServiceAdaptor, evidenceFactory);
+                circumstancesServiceAdaptor, bankDetailsServiceAdaptor, evidenceFactory,
+                mockDailyClaimStatsReportService, mockSsmClient, mockAwsProperties, mockCsvCreator);
     }
 
     @Test
@@ -265,6 +293,89 @@ public class NotificationServiceTest {
         givenWeHaveTheClaimStatsRequest();
         whenWeSendTheClaimStatsMail();
         thenWeVerifyThatWeveCalledTheClaimStatsMail();
+    }
+
+    @Test
+    public void testSendDailyClaimStatsSummaryMail() throws NotificationClientException {
+        //Arrange
+        final ArgumentCaptor<String> emailCaptor = ArgumentCaptor.forClass(String.class);
+        final String expectedRecipients = "one@mail.com,two@mail.com";
+        final String expectedTemplateId = "templateId";
+        final int previousDayCount = 8;
+        final String expectedKey = "AKey";
+        final List<DailyClaimStatsSummary> summaries = Collections.singletonList(
+                new DailyClaimStatsSummary(LocalDate.now(), 1, 1, 1, 1, 1, 1)
+        );
+        final Parameter parameter = new Parameter();
+        parameter.setValue(expectedRecipients);
+        final GetParameterResult getParameterResult = new GetParameterResult();
+        getParameterResult.setParameter(parameter);
+
+        when(mockDailyClaimStatsReportService.getPreviousDailyClaimStats(eq(previousDayCount)))
+                .thenReturn(summaries);
+        when(mockAwsProperties.getDailyClaimStatsMailingListKey()).thenReturn(expectedKey);
+        when(mockSsmClient.getParameter(any())).thenReturn(getParameterResult);
+        when(notificationProperties.getMailDailyClaimStatsSummaryTemplateId()).thenReturn(expectedTemplateId);
+        when(mockCsvCreator.createCsv(eq(summaries))).thenReturn("a csv".getBytes(StandardCharsets.UTF_8));
+        when(client.sendEmail(eq(expectedTemplateId), emailCaptor.capture(), anyMap(), anyString()))
+                .thenReturn(new SendEmailResponse(MAIL_RESPONSE_ONE))
+                .thenReturn(new SendEmailResponse(MAIL_RESPONSE_TWO));
+
+        //Act
+        final List<SendEmailResponse> actuals = notificationService.sendDailyClaimStatsSummaryMail(previousDayCount);
+
+        //Assert
+        assertThat(actuals).hasSize(2);
+        assertThat(actuals.get(0).getBody()).contains("RESPONSE_ONE");
+        assertThat(actuals.get(1).getBody()).contains("RESPONSE_TWO");
+        assertThat(emailCaptor.getAllValues()).isEqualTo(Arrays.asList(expectedRecipients.split(",")));
+    }
+
+    /**
+     * Tests {@link NotificationService#sendDailyClaimStatsSummaryMail(int)} attempts to continue sending emails
+     * even if multiple fail to send.
+     */
+    @Test
+    public void testSendDailyClaimStatsSummaryMailContinuesEmailSendingIfOneError() throws NotificationClientException {
+        //Arrange
+        final String expectedRecipients = "one@mail.com,two@mail.com,three@mail.com,four@mail.com";
+        final String expectedTemplateId = "templateId";
+        final int previousDayCount = 8;
+        final int expectedResponses = 2;
+        final int expectedEmailRecipients = 4;
+        final String expectedKey = "AKey";
+        final List<DailyClaimStatsSummary> summaries = Collections.singletonList(
+                new DailyClaimStatsSummary(LocalDate.now(), 1, 1, 1, 1, 1, 1)
+        );
+        final Parameter parameter = new Parameter();
+        parameter.setValue(expectedRecipients);
+        final GetParameterResult getParameterResult = new GetParameterResult();
+        getParameterResult.setParameter(parameter);
+
+        when(mockDailyClaimStatsReportService.getPreviousDailyClaimStats(eq(previousDayCount)))
+                .thenReturn(summaries);
+        when(mockAwsProperties.getDailyClaimStatsMailingListKey()).thenReturn(expectedKey);
+        when(mockSsmClient.getParameter(any())).thenReturn(getParameterResult);
+        when(notificationProperties.getMailDailyClaimStatsSummaryTemplateId()).thenReturn(expectedTemplateId);
+        when(mockCsvCreator.createCsv(eq(summaries))).thenReturn("a csv".getBytes(StandardCharsets.UTF_8));
+
+        when(client.sendEmail(eq(expectedTemplateId), eq("one@mail.com"), anyMap(), anyString()))
+                .thenReturn(new SendEmailResponse(MAIL_RESPONSE_ONE));
+        when(client.sendEmail(eq(expectedTemplateId), eq("two@mail.com"), anyMap(), anyString()))
+                .thenThrow(new NotificationClientException("Could not send email"));
+        when(client.sendEmail(eq(expectedTemplateId), eq("three@mail.com"), anyMap(), anyString()))
+                .thenThrow(new NotificationClientException("Could not send email"));
+        when(client.sendEmail(eq(expectedTemplateId), eq("four@mail.com"), anyMap(), anyString()))
+                .thenReturn(new SendEmailResponse(MAIL_RESPONSE_TWO));
+
+        //Act
+        final List<SendEmailResponse> actuals = notificationService.sendDailyClaimStatsSummaryMail(previousDayCount);
+
+        //Assert
+        assertThat(actuals).hasSize(expectedResponses);
+        assertThat(actuals.get(0).getBody()).contains("RESPONSE_ONE");
+        assertThat(actuals.get(1).getBody()).contains("RESPONSE_TWO");
+        verify(client, times(expectedEmailRecipients)).sendEmail(eq(expectedTemplateId), anyString(), anyMap(), anyString());
     }
 
     private void givenWeGetTheClaimant(final boolean isEnglishContactPreference) {
